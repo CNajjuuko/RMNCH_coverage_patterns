@@ -1,0 +1,189 @@
+---
+title: "PredictingClusters"
+author: "Claire Najjuuko"
+date: "2024-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(psych)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(dplyr)
+library(broom)
+library(foreign)
+library(nnet)
+
+clusters_dataset = read.csv("/Users/clairenajjuuko/Library/CloudStorage/Box-Box/Under_Five_Mortality/df_Dem_SES.csv")
+
+```
+
+### The dataset
+
+```{r}
+summary(clusters_dataset)
+```
+
+
+```{r}
+analysis_data = clusters_dataset %>% 
+  select(-Cluster.Labels, -AgeOfChildAtDeath, -country) %>% 
+  mutate(across(c(ChildGender_Male, MaritalStatus, UrbanResidence, WealthIndex, MothersEducationalLevel, MothersEmploymentStatus, Segment), factor)) %>% 
+  mutate(across(c(MothersCurrentAge, MaternalParity), scale)) %>% 
+  mutate(Segment = recode(Segment, 
+                          "First" = "High Coverage", 
+                          "Second" = "Low Coverage", 
+                          "Third" = "Medium Coverage"))
+
+summary(analysis_data)
+```
+
+```{r}
+analysis_data$SegmentPrime <- relevel(analysis_data$Segment, ref = "High Coverage")
+analysis_data$MothersEducationalLevel = relevel(analysis_data$MothersEducationalLevel, ref = "No Education")
+analysis_data$MaritalStatus = relevel(analysis_data$MaritalStatus, ref = "never in union")
+analysis_data$WealthIndex = relevel(analysis_data$WealthIndex, ref = "Low")
+```
+
+
+## Bivariate analysis
+
+```{r}
+
+# Function to perform bivariate analysis
+bivariate_analysis <- function(dependent, predictor, data) {
+  # Define formula
+  formula_str <- paste(dependent, "~", predictor)
+  formula <- as.formula(formula_str)
+  
+  # Fit multinomial model
+  model <- multinom(formula, data = data)
+  
+  # Obtain tidy output with OR and CI
+  tidy_output <- tidy(model, conf.int = TRUE, exp = TRUE) %>%
+    mutate(
+      term = if_else(term == "(Intercept)", "Reference", term),
+      estimate_ci = paste0(round(estimate, 2), " (", round(conf.low, 2), "-", round(conf.high, 2), ")")
+    ) %>%
+    select(y.level, term, estimate_ci, p.value)
+  
+  return(tidy_output)
+}
+
+# Function to create the formatted results table
+create_results_table <- function(dependent, predictors, data) {
+  # Perform bivariate analysis for each predictor and store results in a list
+  results_list <- lapply(predictors, function(predictor) {
+    bivariate_result <- bivariate_analysis(dependent, predictor, data)
+    bivariate_result <- bivariate_result %>% 
+      group_by(y.level) %>% 
+      mutate(y.level = factor(y.level, levels = unique(y.level))) %>%
+      pivot_wider(
+        names_from = y.level,
+        values_from = estimate_ci,
+        names_prefix = ""
+      )
+    bivariate_result <- bivariate_result %>% ungroup()
+    bivariate_result <- bivariate_result %>% select(term, everything())
+    return(bivariate_result)
+  })
+  
+  # Combine the results into a single table
+  results_df <- bind_rows(results_list, .id = "Predictor") %>%
+    select(-Predictor)
+  
+  return(results_df)
+}
+
+
+# List of predictors for bivariate analysis
+bivariate_predictors <- c("ChildGender_Male", "MothersCurrentAge", "MaritalStatus", "MaternalParity",
+                          "UrbanResidence", "WealthIndex", "MothersEducationalLevel", "MothersEmploymentStatus")
+
+# Create the results table
+results_table <- create_results_table("Segment", bivariate_predictors, analysis_data)
+
+# Display the results
+print(results_table)
+
+# Save the results to a CSV file
+output_file <- "bivariate_results.csv"
+write.csv(results_table, output_file, row.names = FALSE)
+
+```
+
+
+## Multivariate analysis
+
+```{r}
+
+multivariate_analysis <- function(dependent, predictors, data) {
+  # Create formula string
+  formula_str <- paste(dependent, "~", paste(predictors, collapse = " + "))
+  formula <- as.formula(formula_str)
+  
+  # Fit the multinomial logistic regression model
+  model <- multinom(formula, data = data)
+  
+  # Obtain tidy output with odds ratios and confidence intervals
+  tidy_output <- tidy(model, conf.int = TRUE, exp = TRUE) %>%
+    mutate(
+      estimate_ci = paste0(round(estimate, 2), " (", round(conf.low, 2), "-", round(conf.high, 2), ")"),
+      significance = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01 ~ "**",
+        p.value < 0.05 ~ "*",
+        p.value < 0.2 ~ ".",
+        TRUE ~ ""
+      ),
+      estimate_ci = paste0(estimate_ci, significance)
+    )
+  
+  # Reshape the tidy output into a wide format
+  multivariate_table <- tidy_output %>%
+    select(y.level, term, estimate_ci) %>%
+    pivot_wider(
+      names_from = y.level,
+      values_from = estimate_ci,
+      names_prefix = "Segment_"
+    ) %>%
+    arrange(match(term, predictors)) %>%
+    rename(Variables = term)
+
+  # Get model fit statistics using glance
+  glance_output <- glance(model)
+
+  # Return the combined results
+  results <- list(
+    model_fit = glance_output,
+    results_table = multivariate_table
+  )
+  
+  return(results)
+}
+```
+
+
+```{r}
+# List of predictors for multivariate analysis
+multivariate_predictors <- c("ChildGender_Male","MothersCurrentAge", "MaritalStatus", "MaternalParity",
+                             "UrbanResidence", "WealthIndex", "MothersEducationalLevel", "MothersEmploymentStatus")
+
+# Perform multivariate analysis and get the results
+multivariate_results <- multivariate_analysis("SegmentPrime", multivariate_predictors, analysis_data)
+
+# Access the model fit results
+model_fit <- multivariate_results$model_fit
+print(model_fit)
+
+# Access the results table
+results_table <- multivariate_results$results_table
+print(results_table)
+
+# Save the multivariate results table as a CSV file
+multivariate_output_file <- "multivariate_analysis_table.csv"
+write.csv(results_table, multivariate_output_file, row.names = FALSE)
+```
