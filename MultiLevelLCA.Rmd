@@ -1,0 +1,400 @@
+---
+title: "Multi-level latent class analysis, multinomial regression analysis, and inequalities analysis"
+author: "Claire Najjuuko"
+date: "2025-03-03"
+output: html_document
+---
+
+```{r}
+library(multilevLCA)
+library(caret)
+library(tidyverse)
+library(dplyr)
+
+Full_dataset = read.csv("/Users/clairenajjuuko/Library/CloudStorage/Box-Box/Under_Five_Mortality/CD_data.csv")
+```
+
+
+```{r}
+X_train = Full_dataset %>% 
+  select(-midx, -ChildDied, -Cluster.s.longitude.coordinate, -Cluster.s.latitude.coordinate, -v005, -weights) %>% 
+  mutate(across(c(-rescaled_weights, -AgeAtFirstBirth, -MaternalParity, -MothersCurrentAge), factor)) %>% 
+  mutate(WealthIndex = recode(WealthIndex, `1` = "Lowest", `2` = "Low", `3` = "Middle", `4` = "High", `5` = "Highest")) %>%
+  filter(complete.cases(.)) %>% 
+  mutate(SpecialID = row_number())
+
+```
+
+
+```{r}
+# Correct formula to exclude specific variables
+X_train_encoded <- model.matrix(~ . - psu - country - stratum - 1, data = X_train)
+X_train_encoded <- as.data.frame(X_train_encoded)
+X_train_encoded <- cbind(X_train_encoded, X_train[c("psu", "stratum", "country")])
+
+```
+
+
+```{r}
+Y_cols = c("WasBreastfed", "HealthFacilityDelivery", "SkilledDeliveryCareProvider", "AntenatalCare.4..", "NeonatalTetanusProtection.2..", "IronPillsDuringPregnancy", "BabyPostnatalCheck", "MaternalPostpartumHealthCheck", "CleanCookingFuel", "ProtectedDrinkingWaterSource", "ImprovedToiletFacility", "NonTobaccoSmoker", "OfAgeMarriage", "DecisionMaking_Participation", "PreceedingBirthInterval.33..", "MetNeedFamilyPlanning")
+```
+
+
+```{r}
+low_level_covariates = c("ChildGender_Male", "UrbanResidence", "WealthIndex", "MothersEducationalLevel", "MothersEmploymentStatus", "MothersCurrentAge", "MaritalStatus", "MaternalParity", "AgeAtFirstBirth", "rescaled_weights")
+```
+
+
+### MULTILEVEL LATENT CLASS ANALYSIS
+
+#### Model Selection
+```{r}
+start_time <- Sys.time()
+
+out = multiLCA(X_train, Y = Y_cols, iT = 1:9, Z = low_level_covariates, incomplete = FALSE, kmea = TRUE, dataout = TRUE, extout = TRUE, verbose = TRUE, sequential = TRUE, reord=FALSE)
+
+end_time <- Sys.time()
+duration <- end_time - start_time
+print(duration)
+
+```
+
+
+```{r}
+model_selection <- as.data.frame(out$model_selection)
+model_selection$iT <- 1:nrow(model_selection)
+
+write.csv(model_selection, "/Users/clairenajjuuko/Documents/SSA_ChildMortality/raw_datasets/RMNCH_Project_Code_Jan_13_2024/Processed_Datasets/model_selection.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+start_time <- Sys.time()
+
+out1 = multiLCA(X_train, Y = Y_cols, iT = 3, Z = low_level_covariates, iM = 1:9, id_high = c("country"), incomplete = FALSE, kmea = TRUE, dataout = TRUE, extout = TRUE, verbose = TRUE, sequential = TRUE, reord=FALSE)
+
+end_time <- Sys.time()
+duration <- end_time - start_time
+print(duration)
+
+```
+
+
+```{r}
+model_selection1 <- as.data.frame(out1$model_selection)
+model_selection1$iT <- 1:nrow(model_selection1)
+
+write.csv(model_selection1, "/Users/clairenajjuuko/Documents/SSA_ChildMortality/raw_datasets/RMNCH_Project_Code_Jan_13_2024/Processed_Datasets/model_selection1.csv", row.names = FALSE)
+
+```
+
+
+#### Fitting the selected model
+```{r}
+set.seed(1)
+start_time <- Sys.time()
+
+# X_train$row_index <- seq_len(nrow(X_train))
+out2 = multiLCA(X_train, Y = Y_cols, iT = 3, Z = low_level_covariates, iM = 3, id_high = c("country"), incomplete = FALSE, kmea = TRUE, dataout = TRUE, extout = TRUE, verbose = TRUE, sequential = TRUE, reord=FALSE)
+
+end_time <- Sys.time()
+duration <- end_time - start_time
+print(duration)
+
+# print(out2)
+```
+
+
+```{r}
+out2
+```
+
+
+```{r}
+groups = as.data.frame(out2$mPW)
+group_assignments = out2$mPW[, c("G1", "G2", "G3")]
+groups$Group_Labels <- apply(group_assignments, 1, which.max)
+
+```
+
+
+```{r}
+output_data = out2$mPMsumX
+output_data <- as.data.frame(output_data)
+class_probs <- out2$mPMsumX[, c("C1", "C2", "C3")]
+
+output_data$Cluster_Labels <- apply(class_probs, 1, which.max)
+
+write.csv(output_data, "/Users/clairenajjuuko/Documents/SSA_ChildMortality/raw_datasets/RMNCH_Project_Code_Jan_13_2024/Processed_Datasets/multiLCA_clustered.csv", row.names = FALSE)
+
+# write.csv(output_data, "/Users/clairenajjuuko/Documents/SSA_ChildMortality/raw_datasets/RMNCH_Project_Code_Jan_13_2024/Processed_Datasets/multiLCA_clustered_complete_case.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+output_data <- output_data %>%
+  mutate(Cluster_Labels = recode(Cluster_Labels, `1` = "Highest Utilization", `2` = "Medium Utilization", `3` = "Lowest Utilization")) %>%
+  mutate(Cluster_Labels = as.factor(Cluster_Labels))
+
+```
+
+
+```{r}
+summary(output_data$Cluster_Labels)
+```
+
+
+### ALIGNING ORIGINAL DATASET WITH ASSIGNED CLUSTER LABELS
+
+```{r}
+columns_to_exclude <- c("C1", "C2", "C3", "Cluster_Labels", "PreceedingBirthInterval.33...0", "MetNeedFamilyPlanning.0", "stratum", "psu", "country")
+remaining_columns <- colnames(output_data)[!colnames(output_data) %in% columns_to_exclude]
+
+output_data$UniqueID <- apply(output_data[, remaining_columns], 1, function(x) paste(x, collapse = "_"))
+
+output_data$duplicates <- duplicated(output_data$UniqueID) | duplicated(output_data$UniqueID, fromLast = TRUE)
+print(table(output_data$duplicates))
+
+# summary(as.factor(output_data$UniqueID))
+```
+
+
+```{r}
+remaining_columns_xtrain = c("WasBreastfed1", "HealthFacilityDelivery1", "SkilledDeliveryCareProvider1", "AntenatalCare.4..1",
+                             "NeonatalTetanusProtection.2..1", "IronPillsDuringPregnancy1", "BabyPostnatalCheck1","MaternalPostpartumHealthCheck1",
+                             "CleanCookingFuel1", "ProtectedDrinkingWaterSource1", "ImprovedToiletFacility1", "NonTobaccoSmoker1", "OfAgeMarriage1",
+                             "DecisionMaking_Participation1", "PreceedingBirthInterval.33..1", "PreceedingBirthInterval.33..2", "MetNeedFamilyPlanning1",
+                             "MetNeedFamilyPlanning2", "ChildGender_Male1", "UrbanResidence1", "WealthIndexLow", "WealthIndexMiddle", "WealthIndexHigh",
+                             "WealthIndexHighest", "MothersEducationalLevelNo Education", "MothersEducationalLevelPrimary", "MothersEducationalLevelSecondary",
+                             "MothersEmploymentStatus1", "MothersCurrentAge", "MaritalStatusnever in union", 
+                             "MaritalStatuswidowed/divorced/no longer living together/separated","MaternalParity", "AgeAtFirstBirth", "rescaled_weights") 
+
+```
+
+
+```{r}
+
+X_train_encoded = as.data.frame(X_train_encoded)
+
+X_train_encoded$UniqueID <- apply(X_train_encoded[, remaining_columns_xtrain], 1, function(x) paste(x, collapse = "_"))
+
+X_train_encoded$duplicates <- duplicated(X_train_encoded$UniqueID) | duplicated(X_train_encoded$UniqueID, fromLast = TRUE)
+print(table(X_train_encoded$duplicates))
+
+# X_train$Cluster_Labels <- apply(class_probs, 1, which.max)
+
+```
+
+
+```{r}
+
+sorted_column1 <- sort(X_train_encoded$UniqueID, na.last = TRUE)  
+sorted_column2 <- sort(output_data$UniqueID, na.last = TRUE)
+identical_values <- identical(sorted_column1, sorted_column2)
+print(identical_values)
+merged_data <- merge(X_train_encoded, output_data, by = "UniqueID")
+
+X_train <- X_train %>%
+  left_join(merged_data %>% select(SpecialID, Cluster_Labels), by = "SpecialID")
+
+X_train$Cluster_Labels <- factor(X_train$Cluster_Labels, levels = c("Highest Utilization",  "Medium Utilization",  "Lowest Utilization"))
+levels(X_train$Cluster_Labels)
+
+```
+
+
+```{r}
+# write.csv(X_train, "/Users/clairenajjuuko/Documents/SSA_ChildMortality/raw_datasets/RMNCH_Project_Code_Jan_13_2024/Processed_Datasets/multiLCA_clustered.csv", row.names = FALSE)
+```
+
+
+### MULTINOMIAL REGRESSION ANALYSIS
+
+```{r}
+require(survey)
+library(tableone)
+
+low_level_covariates = c("ChildGender_Male", "UrbanResidence", "WealthIndex", "MothersEducationalLevel", "MothersEmploymentStatus", "MothersCurrentAge", "MaritalStatus", "MaternalParity")
+
+```
+
+
+```{r}
+library(svrepmisc)
+
+my_survey2 = svydesign(ids = X_train$psu, data = X_train, strata = X_train$stratum, 
+                         weight = X_train$rescaled_weights, nest = T)
+                         # options(survey.lonely.psu = "adjust")
+                         
+my_survey2 <- update(my_survey2,
+                    Cluster_Labels = relevel(Cluster_Labels, ref = "Highest Utilization"),
+                    MothersEducationalLevel = relevel(MothersEducationalLevel, ref = "No Education"),
+                    MaritalStatus = relevel(MaritalStatus, ref = "never in union" ),
+                    WealthIndex = relevel(WealthIndex, ref = "Lowest")
+                    )
+
+my_survey3 = as.svrepdesign(my_survey2, type="bootstrap", replicates = 100)
+
+multnom_model = svymultinom(Cluster_Labels ~ ChildGender_Male + MothersCurrentAge + MaritalStatus +  MaternalParity + WealthIndex + 
+                              MothersEducationalLevel + MothersEmploymentStatus + UrbanResidence, design=my_survey3, verbose = FALSE)
+```
+
+
+```{r}
+multnom_model
+```
+
+
+```{r}
+library(knitr)
+kable(round(exp(cbind(coef(multnom_model), confint(multnom_model))), 2))
+```
+
+
+
+### INEQUALITY MEASURES
+```{r}
+library(healthequal)
+```
+
+
+```{r}
+wealth = X_train %>% 
+  select(WealthIndex, Cluster_Labels, country, rescaled_weights, psu, stratum) %>% 
+  mutate(SubgroupOrder = WealthIndex, 
+         WealthIndex = factor(WealthIndex, levels = c("Lowest", "Low",  "Middle", "High", "Highest"), ordered = TRUE),
+         SubgroupOrder = as.numeric(WealthIndex),
+         High_coverage = ifelse(Cluster_Labels == "Highest Utilization", 1, 0))
+
+```
+
+
+
+```{r}
+with(wealth,
+     rci(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+
+```
+
+
+```{r}
+with(wealth,
+     sii(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+
+```
+
+
+##### Education
+
+```{r}
+education = X_train %>% 
+  select(MothersEducationalLevel, Cluster_Labels, country, rescaled_weights, psu, stratum) %>% 
+  mutate(MothersEducationalLevel = factor(MothersEducationalLevel, levels = c('No Education', 'Primary', 'Secondary', 'Higher'), ordered = TRUE),
+         SubgroupOrder = recode(MothersEducationalLevel, 'No Education' = 1, 'Primary' = 2, 'Secondary' = 3, 'Higher' = 4),
+         High_coverage = ifelse( Cluster_Labels == "Highest Utilization", 1, 0))
+
+```
+
+
+```{r}
+with(education,
+     rci(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+
+```
+
+
+```{r}
+with(education,
+     sii(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+
+```
+
+##### Residence
+```{r}
+residence = X_train %>% 
+  select(UrbanResidence, Cluster_Labels, country, rescaled_weights, psu, stratum) %>% 
+  mutate(SubgroupOrder = UrbanResidence, 
+         UrbanResidence = factor(UrbanResidence, levels = c(0, 1), ordered = TRUE),
+         SubgroupOrder = as.numeric(UrbanResidence),
+         High_coverage = ifelse( Cluster_Labels == "Highest Utilization", 1, 0))
+
+residence_ordered <- residence %>%
+  group_by(UrbanResidence, SubgroupOrder) %>%
+  summarise(
+    High_Coverage_Count = sum(High_coverage),
+    Total_Pop = n(),  
+    High_Coverage_Prop = High_Coverage_Count / Total_Pop,
+    .groups = 'drop'
+  )
+```
+
+
+
+```{r}
+with(residence,
+     rci(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+```
+
+
+```{r}
+with(residence,
+     sii(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+```
+
+###### Employment Status
+
+```{r}
+employment = X_train %>% 
+  select(MothersEmploymentStatus, Cluster_Labels, country, rescaled_weights, psu, stratum) %>% 
+  mutate(SubgroupOrder = MothersEmploymentStatus, 
+         MothersEmploymentStatus = factor(MothersEmploymentStatus, levels = c(0, 1), ordered = TRUE),
+         SubgroupOrder = as.numeric(MothersEmploymentStatus),
+         High_coverage = ifelse( Cluster_Labels == "Highest Utilization", 1, 0))
+
+```
+
+
+```{r}
+with(employment,
+     rci(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+```
+
+
+```{r}
+with(employment,
+     sii(est = High_coverage,
+         subgroup_order = SubgroupOrder,
+         weight = rescaled_weights,
+         psu = psu,
+         strata = stratum))
+```
