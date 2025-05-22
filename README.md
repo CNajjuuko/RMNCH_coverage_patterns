@@ -1,5 +1,6 @@
 # RMNCH_utilization_patterns
-This repository has code for latent class analysis of Reproductive,  Maternal, Newborn, and Child Health services using multilevel latent class analyis.
+This repository has code for latent class analysis of Reproductive,  Maternal, Newborn, and Child Health services using multilevel latent class analysis. This code can be used to reproduce results for the manuscript: 
+"Patterns of maternal and child health services utilization and associated socioeconomic disparities in sub-Saharan Africa."
 
 Software dependencies and operating systems (including version numbers)
 
