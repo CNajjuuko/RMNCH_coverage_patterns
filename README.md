@@ -36,7 +36,7 @@ Reproduction instructions:
 In order to reproduce the results in the manuscript, please follow the following steps to obtain access to the datasets:
 - Visit https://dhsprogram.com/, and apply for access to datasets for the following countries: 
 Angola, Burkina Faso, Benin, Burundi, Dem. Rep. Congo, Cote d'Ivoire, Cameroon, Ethiopia, Gabon, Ghana, Gambia, Guinea, Kenya, Liberia, Lesotho, Madagascar, Mali, Mauritania, Malawi, Mozambique, Nigeria, Rwanda, Sierra Leone, Senegal, Chad, Togo, Tanzania, Uganda, South Africa, Zambia, Zimbabwe between 2014 and 2024
-- Then please run the jupyter notebook "Feature Engineering" to perform the feature engineering and then use the resulting dataset for analysis using the multiLevelLCA.Rmd and then followed by the Visualizations.ipynb file to plot the visualizations.
+- Then please run the jupyter notebook "Data Fetching.ipynb" to fetch each countries birth recode file and merge them, followed by "Feature Engineering.ipynb" to perform the feature engineering and then the "Data Preprocessing.ipynb" to perform the feature imputation and obtain descriptive statistics, and then use the resulting dataset for analysis using the "multiLevelLCA.Rmd" and then followed by the "Visualizations.ipynb" file to plot the visualizations.
 
 
 
